@@ -1,0 +1,38 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+- name: include variables from groups_vars/startvars
+  include_vars:
+    file: ../../../inventory/group_vars/startvars.yml
+
+#The following are CPU and memory sizes
+- set_fact:
+      FILEBEAT_MEM_SIZE: "300Mi"
+      FILEBEAT_CPU_SIZE: "100m"
+      FILEBEAT_REQUEST_MEM: "100Mi"
+      ELASTICSEARCH_MEM_SIZE: "{% if PLATFORM == 'appliance'  %} '-Xms24g -Xmx24g' {% else %} '-Xms12g -Xmx12g' {% endif %}"
+      ELASTICSEARCH_CPU_SIZE: "{% if PLATFORM == 'appliance'  %} '5000m' {% else %} '3000m' {% endif %}"
+      LOGSTASH_MEM_SIZE: "{% if PLATFORM == 'appliance'  %} '-Xms12g -Xmx12g' {% else %} '-Xms4g -Xmx4g' {% endif %}"
+
+# todo remove elastic policy as we need the port exposed in kubekit
+# https://github.td.tddb.com/kubekit/kubekit-configurator/pull/274/commits/9983f5f567c181011fc321bd8529b0b71334478e
+
+- name: obtain master count
+  local_action: shell kubectl --kubeconfig={{ hostvars[groups['aster_local'][0]].kubeconfig }} get nodes --show-labels=true | grep node-role.kubernetes.io/master | wc -l
+  register: master_count
+  ignore_errors: no
+
+- name: generate elasticsearch config
+  template: src=templates/etc/ELK/manifests/{{ item }}.yaml.j2 dest={{ role_path }}/templates/etc/ELK/manifests/{{ item }}.yaml
+  with_items:
+    - filebeat 
+    - elasticsearch
+    - elasticsearch-curator
+    - kibana
+    - elastic-policy
+  delegate_to: localhost
+  ignore_errors: no
+
+- name: create ELK
+  local_action: shell kubectl --kubeconfig={{ hostvars[groups['aster_local'][0]].kubeconfig }} apply -f {{ role_path }}/templates/etc/ELK/manifests/
+  ignore_errors: no

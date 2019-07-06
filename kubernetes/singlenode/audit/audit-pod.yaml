@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: audit
+  namespace: appcenter
+  labels:
+    name: audit
+spec:
+  containers:
+    - name: tdrest
+      image: quay.ac.uda.io/appcenter/audit-service
+      env:
+        - name: DATASOURCE_UDASERVICES_JDBCURL
+          value: "jdbc:postgresql://172.17.0.1:5433/udaservices"
+        - name: DATASOURCE_UDASERVICES_USER
+          value: "systemservice"
+        - name: DATASOURCE_UDASERVICES_PASSWORD
+          value: "systemservice"
+        - name: SPRING_CLOUD_CONSUL_HOST
+          value: "172.17.0.1"
+        - name: SPRING_CLOUD_CONSUL_DISCOVERY_HEALTH_CHECK_URL
+          value: "http://172.17.0.1:8005/health"
+        - name: LOGSTR
+          value: "audit_service 1.0"
+        - name: SERVER_PORT
+          value: "8005"
+      ports:
+        - containerPort: 8005
+          hostPort: 8005

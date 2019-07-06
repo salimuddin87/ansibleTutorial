@@ -1,0 +1,456 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+- name: include variables from groups_vars/startvars
+  include_vars:
+    file: ../../../inventory/group_vars/startvars.yml
+
+- name: include variables from asterops/vars
+  include_vars:
+    file: configVars.yaml
+
+- name: include resource request values
+  include_vars:
+    file: ../../../inventory/group_vars/resources_{{ PLATFORM }}.yml
+
+- name: render yaml.preNamespace configs
+  template: src=etc/aster/manifests/{{ item }}.yaml.j2 dest={{ role_path }}/templates/etc/aster/manifests/{{ item }}.yaml.preNamespace
+  with_items:
+    - cloud-aster-ns
+    - queenexec-svc
+    - queen-pod
+    - worker-pod
+    - registry-pod
+    - sshdsidecar-svc
+    - webservices-svc
+    - mleFdrServiceAccount
+    - mleFdrRole
+    - mleFdrRoleBinding
+    - mle-fdr-pod
+    - mlefdr-pvc
+    - mletvicleanup-ds
+    - queenDb-pvc
+    - amvDb-pvc
+  when: mode == "install" or mode == "stop"
+
+# This step is needed as replicated consul pod yaml has special symbols for which ansible throwing an error
+- name: copy consul-pod.yaml.preNamespace config
+  local_action: shell cp {{ role_path }}/templates/etc/aster/manifests/consul-pod.yaml.j2 {{ role_path }}/templates/etc/aster/manifests/consul-pod.yaml.preNamespace
+  when: mode == "install" or mode == "stop"
+  ignore_errors: no
+
+- name: copy mlEngineAlertRules.yaml.preNamespace config
+  local_action: shell cp {{ role_path }}/templates/etc/aster/manifests/mlEngineAlertRules.yaml.j2 {{ role_path }}/templates/etc/aster/manifests/mlEngineAlertRules.yaml.preNamespace
+  when: mode == "install" or mode == "stop"
+  ignore_errors: no
+
+- name: update namespaces
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateNamespaces.sh {{ CLUSTER_NAME }} {{ role_path }}/templates/etc/aster/manifests
+  when: mode == "stop"
+  ignore_errors: no
+
+- name: start kube proxy
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/kubeProxy.sh start {{ hostvars[groups['aster_local'][0]].kubeconfig }}
+  register: proxyvar
+
+- name: existing proxy message
+  debug:
+    msg:
+      - "Using existing proxy with remote-kubeconfig:"
+      - "{{ proxyvar.stdout }}"
+  when: proxyvar.stdout.find("KUBECONFIG") != -1
+
+- name: delete remote configMap
+  local_action: shell {{ ansible_env.KUBECTL }} delete configmap aster-config --ignore-not-found
+  when: mode == "install"
+  ignore_errors: no
+
+- name: check if local configManStatus.json exists
+  local_action: stat path=roles/asterops/templates/etc/aster/manifests/configManStatus.json
+  register: configstatus
+  when: mode == "install"
+
+- name: set values from configManStatus.json
+  set_fact:
+    CONFMAP_PARTITIONS_PER_WORKERPOD: "{{ (lookup('file', 'roles/asterops/templates/etc/aster/manifests/configManStatus.json')|from_json )['vworker-workerpod-count']  }}"
+    CONFMAP_WORKERPOD_COUNT: "{{ (lookup('file', 'roles/asterops/templates/etc/aster/manifests/configManStatus.json')|from_json )['workerpod-count']  }}"
+  when: mode == "install" and configstatus.stat.exists
+
+- name: create aster-config configMap
+  local_action: |
+    shell {{ ansible_env.KUBECTL }} create configmap aster-config  \
+      --from-literal=CONFMAP_PARTITIONS_PER_WORKERPOD={{ CONFMAP_PARTITIONS_PER_WORKERPOD }} \
+      --from-literal=CONFMAP_WORKERPOD_COUNT={{ CONFMAP_WORKERPOD_COUNT }}
+  when: mode == "install" and configstatus.stat.exists
+
+- name: create node labels in order to deploy aster correctly
+  block:
+  - command: >
+      {{ ansible_env.KUBECTL }} get nodes --no-headers
+        --output custom-columns=NAME:.metadata.name
+        -l node-role.kubernetes.io/master
+    run_once: true
+    register: master_nodes
+
+  - command: >
+      {{ ansible_env.KUBECTL }} get nodes --no-headers
+        --output custom-columns=NAME:.metadata.name
+        -l node-role.kubernetes.io/worker
+    run_once: true
+    register: worker_nodes
+
+  - set_fact:
+      queen: "{{ queen if queen != '' else worker_nodes.stdout_lines[0] }}"
+    when: not DEPLOY_ON_KUBEMASTERS
+  - set_fact:
+      worker_list:
+        "{{ [queen] + worker_nodes.stdout_lines | difference(queen) if
+        queen in worker_nodes.stdout_lines else
+        worker_nodes.stdout_lines }}"
+    when: not DEPLOY_ON_KUBEMASTERS
+  - set_fact:
+      queen: "{{ queen if queen != '' else master_nodes.stdout_lines[0] }}"
+    when: DEPLOY_ON_KUBEMASTERS
+  - set_fact:
+      worker_list:
+        "[queen] + {{ worker_nodes.stdout_lines | difference(queen) +
+        master_nodes.stdout_lines | difference(queen) }}"
+    when: DEPLOY_ON_KUBEMASTERS
+  - set_fact:
+      workernode_count: "{{ worker_list|length }}"
+
+  - command: >
+       {{ ansible_env.KUBECTL }} label node {{ queen }} queen=qpod --overwrite=true 
+    run_once: true
+
+  - command: >
+       {{ ansible_env.KUBECTL }} label node
+          {{ worker_list[(item|int) % (workernode_count|int)] }}
+          worker{{ item }}=w{{ item }}pod --overwrite=true
+    with_sequence:
+       start=1
+       end={{ WORKERPOD_COUNT }}
+    run_once: true
+  when: mode == "install"
+  delegate_to: localhost
+
+- name: check for remote configManStatus.json exists
+  local_action: shell {{ ansible_env.KUBECTL }} get configmap aster-config --ignore-not-found
+  register: remoteConfig
+  when: mode == "start"
+
+- name: update namespaces
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateNamespaces.sh {{ CLUSTER_NAME }} {{ role_path }}/templates/etc/aster/manifests/
+  when: mode == "install" or  mode == "start"
+  ignore_errors: no
+
+- name: get partitions per workerpod from configMap
+  local_action: shell {{ ansible_env.KUBECTL }} get configmap aster-config -o "jsonpath={.data['CONFMAP_PARTITIONS_PER_WORKERPOD']}"
+  register: partitionsPerWP
+  when: mode == "start" and remoteConfig.stdout != ""
+
+- name: get worker pod count from configMap
+  local_action: shell {{ ansible_env.KUBECTL }} get configmap aster-config -o "jsonpath={.data['CONFMAP_WORKERPOD_COUNT']}"
+  register: workerPodCount
+  when: mode == "start" and remoteConfig.stdout != ""
+
+- name: set partition and values from configMap
+  set_fact:
+    CONF_WORKERPOD_COUNT: "{{ workerPodCount.stdout }}"
+    CONF_PARTITIONS_PER_WORKERPOD: "{{ partitionsPerWP.stdout }}"
+  when: mode == "start"  and remoteConfig.stdout != ""
+
+- name: set partition and values to defaults
+  set_fact:
+    CONF_WORKERPOD_COUNT: "{{ DEFAULT_WORKERPOD_COUNT }}"
+    CONF_PARTITIONS_PER_WORKERPOD: "{{ DEFAULT_PARTITIONS_PER_WORKERPOD }}"
+  when: mode == "start" and remoteConfig.stdout == ""
+
+- name: create aster namespace
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/cloud-aster-ns.yaml
+  when: mode == "install"
+  ignore_errors: no
+  any_errors_fatal: true
+  # to "fix" & avoid a recurrence of BH-18930 (which was once rated "critical"),
+  # we want "create aster namespace" to fail fast. This avoids misdiagnosing
+  # user mistake of "not stopping aster before reinstalling" as defect(s) in
+  # later task(s).
+
+- name: create secret for k8s to pull images from artifactory
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/createSecret.sh {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }} {{ DOCKER_REPO_USERNAME }} {{ DOCKER_REPO_PASSWORD }} {{ DOCKER_EMAIL }} {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create queenDb PVC
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/queenDb-pvc.yaml
+  ignore_errors: no
+  when: mode == "install"
+
+- name: create amvDb PVC
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/amvDb-pvc.yaml
+  ignore_errors: no
+  when: mode == "install"
+
+- name: create consul
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/consul-pod.yaml
+  ignore_errors: no
+  when: mode == "start"
+
+- name: set paths for AUTHORIZED_KEY,HOST_RSA_KEY,HOST_RSA_KEY_PUB
+  set_fact:
+    AUTHORIZED_KEY: "{{SSH_KEYS_DIR}}/{{SSH_AUTHORIZED_KEY}}"
+    AUTHORIZED_KEY_PUB: "{{SSH_KEYS_DIR}}/{{SSH_AUTHORIZED_KEY}}.pub"
+    HOST_RSA_KEY: "{{SSH_KEYS_DIR}}/{{SSH_HOST_RSA_KEY}}"
+    HOST_RSA_KEY_PUB: "{{SSH_KEYS_DIR}}/{{SSH_HOST_RSA_KEY}}.pub"
+  ignore_errors: no
+
+# As suggested by reviewers (Vipul Shah, Prasad Katti, Patrick Murray):
+# lifetimes of key pairs and associated configMaps, secrets are now same.
+# They are all created during MLEngine "start".
+# They are all deleted during MLEngine "stop".
+# "Once we merge this change for Drop 24, the TDAP Install team will move
+#  copying these files to TD nodes for every start, solving the problem."
+
+- name: delete key pair generated for bad_db user tdatuser
+  local_action: shell rm -f {{ AUTHORIZED_KEY }} {{ AUTHORIZED_KEY_PUB }}
+  when: mode == "stop"
+  ignore_errors: no
+
+- name: delete host key pair generated for MLEngine sshdsidecar container
+  local_action: shell rm -f {{ HOST_RSA_KEY }} {{ HOST_RSA_KEY_PUB }}
+  when: mode == "stop"
+  ignore_errors: no
+
+- name: delete ssh authorized keys configMap
+  local_action: shell {{ ansible_env.KUBECTL }} delete configmap ssh-authorized-keys -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "start" or mode == "stop"
+  ignore_errors: no
+
+- name: delete ssh authorized keys secret
+  local_action: shell {{ ansible_env.KUBECTL }} delete secret ssh-authorized-keys-secret -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "start" or mode == "stop"
+  ignore_errors: no
+
+- name: delete namespace objects
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/deleteNamespaceObjects.sh {{ CLUSTER_NAME }} {{ role_path }}/files/etc/aster/manifests
+  when: mode == "stop"
+  ignore_errors: yes
+
+- name: create {{SSH_KEYS_DIR}}
+  file: name={{SSH_KEYS_DIR}} state=directory
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create key pair for bad_db user tdatuser
+  local_action: shell echo y | ssh-keygen -t rsa -b 2048 -C tdatuser -N '' -f {{ AUTHORIZED_KEY }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create ssh authorized keys configmap
+  local_action: shell {{ ansible_env.KUBECTL }} create configmap ssh-authorized-keys --from-file={{ AUTHORIZED_KEY_PUB }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create ssh authorized keys secret
+  local_action: shell {{ ansible_env.KUBECTL }} create secret generic ssh-authorized-keys-secret --from-file={{ AUTHORIZED_KEY }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: delete configMap for /etc/ssh/ssh_host_rsa_key.pub
+  local_action: shell {{ ansible_env.KUBECTL }} delete configmap ssh-host-rsa-key-pub -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "start" or mode == "stop"
+  ignore_errors: no
+
+- name: create host key pair for MLEngine sshdsidecar container
+  local_action: shell echo y | ssh-keygen -t rsa -b 2048 -N '' -f {{ HOST_RSA_KEY }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create configmap for /etc/ssh/ssh_host_rsa_key.pub
+  local_action: shell {{ ansible_env.KUBECTL }} create configmap ssh-host-rsa-key-pub --from-file={{HOST_RSA_KEY_PUB}} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: delete ssh host rsa key secret
+  local_action: shell {{ ansible_env.KUBECTL }} delete secret ssh-host-rsa-key -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "start" or mode == "stop"
+  ignore_errors: no
+
+- name: create ssh host rsa key secret
+  local_action: shell {{ ansible_env.KUBECTL }} create secret generic ssh-host-rsa-key --from-file={{HOST_RSA_KEY}} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create queenexec service
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/queenexec-svc.yaml
+  register: create_queenexecsvc_status
+  when: mode == "start"
+  until: create_queenexecsvc_status.rc == 0
+  retries: "{{ SVC_RETRIES }}"
+  delay: 10
+  ignore_errors: no
+
+- name: create sshdsidecar service
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/sshdsidecar-svc.yaml
+  register: create_sshdsidecarsvc_status
+  when: mode == "start"
+  until: create_sshdsidecarsvc_status.rc == 0
+  retries: "{{ SVC_RETRIES }}"
+  delay: 10
+  ignore_errors: no
+
+- name: create webservices service
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/webservices-svc.yaml
+  register: create_webservice_status
+  when: mode == "start"
+  until: create_webservice_status.rc == 0
+  retries: "{{ SVC_RETRIES }}"
+  delay: 10
+  ignore_errors: no
+
+  # consul is reliably available only when it has a leader. 
+  # 1) when "/bin/consul members" returns 
+  #      "consul  172.24.4.78:8301  alive ..."
+  #    consul is available and works 90% of the time.
+  # But, there is 10% chance, a "/bin/consul kv put ..." may fail with
+  #      "Unexpected response code: 500 (No cluster leader)"
+  # To avoid these intermittent failures, we do:
+  # 2) wait and retry until "/bin/consul info" returns
+  #      "leader = true"
+  # indicating consul has elected a leader: consul is up and ready.
+- name: wait until consul is available
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul curl consul.{{ CLUSTER_NAME }}.svc.cluster.local:8500/v1/health/service/consul -n {{ CLUSTER_NAME }} | grep "Agent alive and reachable" 
+  register: consul_status
+  when: mode == "start"
+  ignore_errors: no
+  until: consul_status.rc == 0
+  retries: "{{ SVC_RETRIES }}"
+  delay: 5
+
+- name: set vWorkerPerPodCount and workerPodCount in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/vWorkerPerPodCount {{ CONF_PARTITIONS_PER_WORKERPOD }} -n {{ CLUSTER_NAME }} && {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/workerPodCount {{ CONF_WORKERPOD_COUNT }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+  retries: "{{ SVC_RETRIES }}"
+  delay: 1
+
+- name: set versionCheckEnabled in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/version/versionCheckEnabled {{ VERSION_CHECK_ENABLED }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+
+- name: set WLM switch
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/WLMSwitch {{ "ENABLED" if WLM_ENABLED else "DISABLED" }} -n {{ CLUSTER_NAME }} && {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv get {{ CLUSTER_NAME }}/sysconfig/WLMSwitch -n {{ CLUSTER_NAME }}
+  register: wlmswitch_status
+  when: WLM_ENABLED is defined and mode == "start"
+  until: wlmswitch_status.rc == 0 and wlmswitch_status.stdout.find("WLMSwitch") != -1
+  retries: "{{ SVC_RETRIES }}"
+  ignore_errors: no
+
+- name: set QLM switch in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/QLM_Enabled {{ QLM_ENABLED }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: set QLM switch interval in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/QLM_switchIntervalSec {{ QLM_SWITCH_INTERVAL_SEC }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: set MLE FDR parameters in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/fdr/fdrClusterState "incorporating" -n {{ CLUSTER_NAME }} && {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/fdr/fdrAttempts {{ FDR_ATTEMPTS }} -n {{ CLUSTER_NAME }} && {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/fdr/fdrTimeout {{ FDR_TIMEOUT }} -n {{ CLUSTER_NAME }} && {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/fdr/fdrResetAttemptsInSeconds {{ FDR_RESET_ATTEMPTS_SEC }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: set SLM switch in consul
+  local_action: shell {{ ansible_env.KUBECTL }} exec -it consul-0 -c consul /bin/consul kv put {{ CLUSTER_NAME }}/sysconfig/SLM_Enabled {{ SLM_ENABLED }} -n {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+  
+- name: update remote registry info in pod definitions
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateRegistryInfo.sh {{ role_path }}/templates/etc/aster/manifests/   {{ USE_LOCAL_REGISTRY }} {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }} {{ DOCKER_REPO_PATH }} {{ DOCKER_REPO_TAG }} {{ CONF_WORKERPOD_COUNT }}
+  when: USE_REMOTE_REGISTRY and mode == "start"
+  ignore_errors: no
+
+- name: update local registry ip in pod definitions
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateRegistryInfo.sh {{ USE_LOCAL_REGISTRY }} {{ hostvars[groups['kube_master'][0]][cluster_iface_name].ipv4.address }} {{ CONF_WORKERPOD_COUNT }}
+  when: USE_LOCAL_REGISTRY and mode == "start"
+  ignore_errors: no
+
+- name: load aster docker images into registry
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/loadDockerImagesIntoRegistry.sh {{ groups['kube_master'][0] }}
+  when: USE_LOCAL_REGISTRY and mode == "install"
+  ignore_errors: yes
+
+- name: generate credentials for ICE and ARC mutual authentication
+  local_action: shell python {{ role_path }}/files/etc/aster/manifests/generateCredentials.py {{ansible_env.SECURITY_LEVEL}}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create secrets for ICE and ARC mutual authentication
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/createSecuritySecrets.sh {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create useamvdb secret (used by queen and worker pods)
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/setupAmvDb.sh {{ USE_AMV_DB }} {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create required serviceaccount to delete queen and worker pods for MLE FDR
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mleFdrServiceAccount.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create required role to delete queen and worker pods for MLE FDR
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mleFdrRole.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create required rolebinding to delete queen and worker pods when required during MLE FDR
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mleFdrRoleBinding.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create required PVC for MLE FDR pod
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mlefdr-pvc.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create FDR pod
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mle-fdr-pod.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create mletvicleanup daemon set
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mletvicleanup-ds.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create aster queen
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/queen-pod.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: wait for queen pod to come up as we need its IP address in other worker pods
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/waitTillQueenPodUp.sh {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create aster workers
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/worker-pod.yaml
+  when: mode == "start"
+  ignore_errors: no
+
+- name: wait for all pods to be up
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/waitForPods.sh {{ CONF_WORKERPOD_COUNT }} {{ CLUSTER_NAME }}
+  when: mode == "start"
+  ignore_errors: no
+
+- name: create ML engine alert rules
+  local_action: shell {{ ansible_env.KUBECTL }} create -f {{ role_path }}/templates/etc/aster/manifests/mlEngineAlertRules.yaml
+  ignore_errors: no
+  when: mode == "start"
+
+- name: stop proxy
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/kubeProxy.sh stop {{ proxyvar.stdout }}
+  when: proxyvar.stdout.find("KUBECONFIG") == -1

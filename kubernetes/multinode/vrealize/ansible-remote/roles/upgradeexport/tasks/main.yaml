@@ -1,0 +1,108 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+- name: include variables from groups_vars/startvars
+  include_vars:
+    file: ../../../inventory/group_vars/startvars.yml
+
+- name: include resource request values
+  include_vars:
+    file: ../../../inventory/group_vars/resources_{{ PLATFORM }}.yml
+
+- name: check if localPath is defined 
+  stat: 
+    path: "{{ localPath }}"
+  register: localDir
+
+- fail:
+    msg: "localPath is either undefined or not a directory.
+          Please provide the path where you want metadata tar file to get exported as an input in extravars."
+  when: localDir.stat.isdir is not defined or not localDir.stat.isdir
+
+- name: render yaml.preNamespace configs
+  template: src=etc/aster/manifests/{{ item }}.yaml.j2 dest={{ role_path }}/templates/etc/aster/manifests/{{ item }}.yaml.preNamespace
+  with_items:
+    - mleexportupgrade-pod
+
+- name: start kube proxy
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/kubeProxy.sh start {{ hostvars[groups['aster_local'][0]].kubeconfig }}
+  register: proxyvar
+
+- name: existing proxy message
+  debug:
+    msg:
+      - "Using existing proxy with remote-kubeconfig:"
+      - "{{ proxyvar.stdout }}"
+  when: proxyvar.stdout.find("KUBECONFIG") != -1
+
+- name: update namespaces
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateNamespaces.sh {{ CLUSTER_NAME }} {{ role_path }}/templates/etc/aster/manifests/
+  ignore_errors: no
+
+- name: create node labels in order to deploy pod correctly
+  block:
+  - command: >
+      kubectl get nodes --no-headers --output custom-columns=NAME:.metadata.name -l node-role.kubernetes.io/master
+    run_once: true
+    register: master_nodes
+
+  - command: >
+      kubectl get nodes --no-headers --output custom-columns=NAME:.metadata.name -l node-role.kubernetes.io/worker
+    run_once: true
+    register: worker_nodes
+
+  - set_fact:
+      queen: "{{ queen if queen != '' else worker_nodes.stdout_lines[0] }}"
+    when: not DEPLOY_ON_KUBEMASTERS
+  - set_fact:
+      queen: "{{ queen if queen != '' else master_nodes.stdout_lines[0] }}"
+    when: DEPLOY_ON_KUBEMASTERS
+  - command: >
+       kubectl label node {{ queen }} node-role-mleupgrade=mle-upgrade --overwrite=true
+    run_once: true
+
+- name: update remote registry info in pod definitions
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateRegistryInfo.sh {{ role_path }}/templates/etc/aster/manifests/   {{ USE_LOCAL_REGISTRY }} {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }} {{ DOCKER_REPO_PATH }} {{ DOCKER_REPO_TAG }}
+  when: USE_REMOTE_REGISTRY
+  ignore_errors: no
+
+- name: create mleexportupdate
+  local_action: shell kubectl create -f {{ role_path }}/templates/etc/aster/manifests/mleexportupgrade-pod.yaml
+  ignore_errors: no
+
+- name: check pod status
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/waitForExportPod.sh {{ CLUSTER_NAME }}
+  ignore_errors: no
+
+- name: check if export is done and the tar file is created
+  local_action: shell kubectl cp upgradeexport:/tmp/{{ hashfile }} {{ localPath }}/ -c mle-metadata-export -n {{ CLUSTER_NAME }}
+  register: export_status
+  until: export_status.rc == 0
+  retries: 50
+  delay: 5
+  ignore_errors: no
+
+- name: copy exported files to controller node
+  local_action: shell kubectl cp upgradeexport:/home/beehive/mle_upgrade_backup/{{ tarfile }} {{ localPath }}/ -c mle-metadata-export -n {{ CLUSTER_NAME }}
+  ignore_errors: no
+
+- name: Inform the exportpod that the copy is complete
+  local_action: shell touch kcpDone && kubectl cp kcpDone upgradeexport:/tmp/ -c mle-metadata-export -n {{ CLUSTER_NAME }} && rm kcpDone
+  ignore_errors: no
+
+- name: Copy export logs to controller machine
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/copyLogs.sh {{ CLUSTER_NAME }} {{ localPath }}
+  ignore_errors: no
+
+- name: Verify md5hash hash of tar file
+  local_action: shell python {{ role_path }}/files/etc/aster/manifests/checkMd5hash.py {{ localPath }}/{{ tarfile }} {{ localPath }}/{{ hashfile }}
+  ignore_errors: no
+
+- name: delete exportpod
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/deleteExportPod.sh {{ CLUSTER_NAME }} {{ role_path }}/templates/etc/aster/manifests/mleexportupgrade-pod.yaml
+  ignore_errors: no
+
+- name: stop proxy
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/kubeProxy.sh stop {{ proxyvar.stdout }}
+  when: proxyvar.stdout.find("KUBECONFIG") == -1
+

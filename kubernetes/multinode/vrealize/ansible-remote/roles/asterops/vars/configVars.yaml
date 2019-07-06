@@ -1,0 +1,7 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+# Default configuration 
+DEFAULT_PARTITIONS_PER_WORKERPOD: 1
+DEFAULT_WORKERPOD_COUNT: 2
+DEFAULT_QUEEN_PORT: 30002

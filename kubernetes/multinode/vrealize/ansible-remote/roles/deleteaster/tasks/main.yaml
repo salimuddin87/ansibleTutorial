@@ -1,0 +1,187 @@
+# Copyright (c) 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+- name: include variables from groups_vars/startvars
+  include_vars:
+    file: ../../../inventory/group_vars/startvars.yml
+
+- name: render yaml.preNamespace configs
+  template: src={{ role_path }}/../asterops/templates/etc/aster/manifests/cloud-aster-ns.yaml.j2 dest={{ role_path }}/../asterops/templates/etc/aster/manifests/cloud-aster-ns.yaml.preNamespace
+  when: mode == "deleteK8S"
+
+- name: update namespaces
+  local_action: shell {{ role_path }}/files/etc/aster/manifests/updateNamespaces.sh {{ CLUSTER_NAME }} {{ role_path }}/../asterops/templates/etc/aster/manifests
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+- name: delete aster-config configmap 
+  local_action: shell {{ ansible_env.KUBECTL }} delete configmap aster-config --ignore-not-found
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+- name: delete amv, credentials directories
+  file: path=./{{ item }} state=absent
+  with_items: 
+    - amv
+    - credentials
+  delegate_to: localhost
+  when: mode == "deleteK8S"
+  
+# following delete tasks may not be necessary because
+# delete aster namespace cascade will delete them too.
+- name: delete k8s secret used to pull images from artifactory
+  local_action: shell {{ ansible_env.KUBECTL }} delete secret docker-registry -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "deleteK8S"
+  ignore_errors: no
+  
+- name: delete k8s secrets used for ICE and ARC security
+  local_action: shell {{ ansible_env.KUBECTL }} delete secret iceserver -n {{ CLUSTER_NAME }} --ignore-not-found && {{ ansible_env.KUBECTL }} delete secret configjson -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "deleteK8S"
+  ignore_errors: no
+  
+- name: delete amvdb secret
+  local_action: shell {{ ansible_env.KUBECTL }} delete secret useamvdb -n {{ CLUSTER_NAME }} --ignore-not-found
+  when: mode == "deleteK8S"
+  ignore_errors: no
+  
+# lifetimes of configMaps, secrets coincide with that of their namespace
+# deleting a namespace automatically deletes its configMaps, secrets. So,
+# we rely on the namespace delete below to do that. 
+
+- name: delete aster namespace cascade
+  local_action: shell {{ role_path }}/../asterops/files/etc/aster/manifests/deleteNamespaces.sh {{ CLUSTER_NAME }} aster {{ role_path }}/../asterops/templates/etc/aster/manifests
+  any_errors_fatal: true
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+# an MLEngine uninstall must delete any key pairs created by its install
+
+- name: set paths for AUTHORIZED_KEY,HOST_RSA_KEY
+  set_fact: 
+    AUTHORIZED_KEY: "{{SSH_KEYS_DIR}}/{{SSH_AUTHORIZED_KEY}}"
+    AUTHORIZED_KEY_PUB: "{{SSH_KEYS_DIR}}/{{SSH_AUTHORIZED_KEY}}.pub"
+    HOST_RSA_KEY: "{{SSH_KEYS_DIR}}/{{SSH_HOST_RSA_KEY}}"
+    HOST_RSA_KEY_PUB: "{{SSH_KEYS_DIR}}/{{SSH_HOST_RSA_KEY}}.pub"
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+- name: delete key pair generated for bad_db user tdatuser
+  local_action: shell rm -f {{ AUTHORIZED_KEY }} {{ AUTHORIZED_KEY_PUB }}
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+- name: delete host key pair generated for MLEngine sshdsidecar container
+  local_action: shell rm -f {{ HOST_RSA_KEY }} {{ HOST_RSA_KEY_PUB }}
+  when: mode == "deleteK8S"
+  ignore_errors: no
+
+# delete aster namespace cascade with appropriate eviction policy
+# should eventually delete all unused aster docker images.
+# So, the following delete-docker-images tasks can be commented out
+# for TDAP customers who do not mind unused aster docker images 
+# lingering on their k8s cluster.
+# But, for TDAP customers who want to wipe away all aster-related 
+# artifacts from their k8s cluster, these tasks are necessary.
+
+- name: include variables from groups_vars
+  include_vars:
+      file: ../../../inventory/group_vars/all.yml
+  when: mode == "deleteImages"
+
+- name: setting array variables of images
+  set_fact:
+    MASTER_IMAGES:
+      - arc
+      - astershell
+      - cleanupdaemon
+      - ice
+      - mailman
+      - procmgmt
+      - qlmmaster
+      - qosmanager
+      - queenexec
+      - rum
+      - runner
+      - setupcommon
+      - sshdsidecar
+      - statsserver
+      - sysman
+      - transdatacont
+      - txman
+      - txmanslave
+      - webservices
+    QUEEN_IMAGES:
+      - arc
+      - astershell
+      - cleanupdaemon
+      - ice
+      - mailman
+      - procmgmt
+      - qlmmaster
+      - qosmanager
+      - queenexec
+      - rum
+      - setupcommon
+      - sshdsidecar
+      - statsserver
+      - sysman
+      - txman
+      - txmanslave
+      - webservices
+      - consul
+    WORKER_IMAGES:
+      - ice
+      - rum
+      - setupcommon
+      - statsserver
+      - txmanslave
+      - arc
+      - runner
+  when: mode == "deleteImages"
+
+- name: create '/data/aster/{{ item }}'
+  file: path=/data/aster/{{ item }} state=directory
+  with_items:
+    - files
+  when: mode == "deleteImages"
+
+- name: copy '/etc/aster/manifests/{{ item }}.sh'
+  copy: src=etc/aster/manifests/{{ item }}.sh dest=/data/aster/files/{{ item }}.sh mode=0755
+  with_items:
+    - dockerRMI
+  when: mode == "deleteImages" and inventory_hostname in groups['kube_aster'][0:]
+
+- name: delete docker images from master
+  shell: |
+    /data/aster/files/dockerRMI.sh {{ item }} master
+  with_items:
+    "{{ MASTER_IMAGES }}"
+  ignore_errors: no
+  when: mode == "deleteImages" and inventory_hostname in groups['kube_master'] 
+
+- name: delete all docker images from queen node
+  shell: |
+    /data/aster/files/dockerRMI.sh {{ item }} node {{ groups['aster_queen'] }}
+    /data/aster/files/dockerRMI.sh {{ item }} node_remote {{ DOCKER_REPO_PATH }} {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }}
+    /data/aster/files/dockerRMI.sh {{ item }} node_remote_all {{ DOCKER_REPO_HOST }}
+  with_items:
+    "{{ QUEEN_IMAGES }}"
+  ignore_errors: no
+  when: mode == "deleteImages" and inventory_hostname in groups['aster_queen'] 
+
+- name: delete all docker images from worker nodes
+  shell: |
+    /data/aster/files/dockerRMI.sh {{ item }} node {{ groups['aster_queen'] }}
+    /data/aster/files/dockerRMI.sh {{ item }} node_remote {{ DOCKER_REPO_PATH }} {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }}
+    /data/aster/files/dockerRMI.sh {{ item }} node_remote_all {{ DOCKER_REPO_HOST }} {{ DOCKER_REPO_PORT }}
+  with_items:
+    "{{ WORKER_IMAGES }}"
+  ignore_errors: no
+  when: mode == "deleteImages" and inventory_hostname in groups['aster_workers']
+
+- name: delete '/data/aster/{{ item }}'
+  file: path=/data/aster/{{ item }} state=absent
+  with_items:
+    - files
+  when: mode == "deleteImages"
+

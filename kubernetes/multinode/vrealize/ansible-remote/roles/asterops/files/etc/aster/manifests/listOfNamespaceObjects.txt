@@ -1,0 +1,29 @@
+configmap mlengine-rules-v1
+secret arcclient
+sts consul
+sts queen
+sts worker
+sts mlefdr
+service consul
+service queen
+service worker
+service mlefdr
+service queenexec-service
+service sshdsidecar-service
+service webservices-service
+secret arcserver
+secret configjson
+secret consul-gossip-key
+secret iceserver
+secret regsecret
+secret useamvdb
+secret webservices
+serviceaccount mlefdrsa
+role.rbac.authorization.k8s.io/mle-fdr-role
+rolebinding.rbac.authorization.k8s.io/mle-fdr-rolebinding
+secret ssh-authorized-keys-secret
+secret ssh-host-rsa-key
+configmap ssh-host-rsa-key-pub
+configmap ssh-authorized-keys
+pvc mlefdr-pvc
+daemonset.extensions/mletvicleanup

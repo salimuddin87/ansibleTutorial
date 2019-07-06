@@ -1,0 +1,50 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+CLUSTER_NAME: cloud-aster
+PARTITIONS_PER_WORKERPOD: 1
+WORKERPOD_COUNT: 2
+KEEP_LOCAL_REGISTRY: false
+QUEEN_PORT: 30002
+WLM_ENABLED: true
+QUEEN_HTTP_PORT: 30003
+USE_AMV_DB: true
+DEPLOY_HEAPSTER: true
+VERSION_CHECK_ENABLED: true
+QLM_ENABLED: false
+SLM_ENABLED: true
+RUM_FS_CHECKING_INTERVAL: 30
+RUM_FS_REJECT_NEW_QUERIES_THRESHOLD: 80%
+RUM_FS_CANCEL_RUNNING_QUERIES_THRESHOLD: 85%
+DEPLOY_ON_KUBEMASTERS: false
+SSH_KEYS_DIR: /tmp/sshdsidecar
+SSH_AUTHORIZED_KEY: id_rsa
+SSH_HOST_RSA_KEY: ssh_host_rsa_key
+
+# FDR parameters
+FDR_ATTEMPTS: 10
+# Please do not lower FDR_TIMEOUT to a value below 900 seconds (15 minutes)
+FDR_TIMEOUT: 900
+FDR_RESET_ATTEMPTS_SEC: 86400
+
+# PLATFORM USED: VRA, IFX1, or IFX2
+PLATFORM: "VRA"
+
+# DO NOT MODIFY THE FOLLOWING UNLESS YOU KNOW WHAT YOU ARE DOING
+
+SVC_RETRIES : 45
+
+CONSUL_RETRIES: 30
+QLM_SWITCH_INTERVAL_SEC: 60
+
+# The following are the host paths only, paths in the containers remain unchanged
+LOCAL_TMP:  
+TEMPSPACE: 
+SHARED_MEMORY_PATH: /dev/shm/td_qg_ipc
+QG_VAR_PATH: /var/opt/tddb/tdqg
+QG_OPT_PATH: /opt/tddb/tdqg
+QG_TDCONFIG_PATH: /etc/opt/tddb/tdconfig/tdqg
+
+#time interval in sec to collect the stats for QLM
+STATS_UPDATE_INTERVAL_SEC: 5
+SLM_SAMPLING_RATE: 60

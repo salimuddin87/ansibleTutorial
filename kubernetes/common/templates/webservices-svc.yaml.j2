@@ -1,0 +1,25 @@
+# Copyright (c) 2017 by bad_db Corporation. All rights reserved.
+# tddb CORPORATION CONFIDENTIAL AND TRADE SECRET
+
+# Aster Webservices service definition
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: webservices-service
+  namespace: cloud-aster
+  labels:
+    k8s-app: webservices-service
+    kubernetes.io/cluster-service: "true"
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 30008
+      nodePort: 30008
+    - name: https
+      port: 30009
+      nodePort: 30009
+  selector:
+    name: queen
+

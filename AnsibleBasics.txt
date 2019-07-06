@@ -1,0 +1,145 @@
+# Ansible Tutorial
+Ansible is written in Python.
+
+This is a configuration management and provisioning tool similar to chef, Puppet or Salt. 
+It uses SSH to connect to the servers and run the configured tasks.
+By default, It runs in push mode, which allows it very fine-grained control over when it talks to each system.
+
+# pull configuration tool (Nodes check with the server periodically and fetch the configuration from it.)
+# push configuration tool (servers pushes configuration to the nodes)
+
+# Ansible - (Develop -> Test -> Deploy -> Monitor)
+
+-------------------------------------------------------------------------------
+# Inventory file is as below
+
+[webservers]
+abc1.xyz.com
+abc2.xyz.com
+abc3.xyz.com
+
+[databases]
+db1.xyz.com
+db2.xyz.com
+-------------------------------------------------------------------------------
+# A simple playbook
+---
+-name: play1
+ hosts: webservers
+ tasks:
+    -name: install apache
+     yum: 
+        name: apache
+        state: present
+    -name: start apache
+     service:
+        name: apache
+        state: start
+
+-name: play2
+ hosts: databases
+ tasks:
+    -name: install MySql
+     yum:
+        name: MySql
+        state: present
+.
+.
+.
+-------------------------------------------------------------------------------
+The following command could be used to add new users to Ansuible
+
+ansible all -m ping -s -k -u user_name
+
+        all - Use all defined servers from the inventory file
+        -m ping - Use the "ping" module, which simply runs the ping command and returns the results
+        -s - Use "sudo" to run the commands
+        -k - Ask for a password rather than use key-based authentication
+        -u vagrant - Log into servers using user vagrant
+-------------------------------------------------------------------------------
+Ansible uses modules to accomplish most it its Tasks. Modules can do things like
+
+        install software
+        copy files
+        Use Templates 
+
+Modules are idempotent, which means no mater how many times you run them they only run the tasks that
+have been updated. This will make them very safe to be run over and over again without making any damages.
+-------------------------------------------------------------------------------
+# Tasks
+The individual processes run in order within Ansible  playbook file.  At a basic level, a task is nothing
+more than a call to an ansible module. E.g
+  
+  - hosts: webservers
+    vars:
+        http_port: 80
+        max_clients: 200
+    remote_user: root
+    tasks:
+        - name: ensure apache is at the latest version
+            yum: name=httpd state=latest
+        - name: write the apache config file
+            template: src=/srv/httpd.j2 dest=/etc/httpd.conf
+        notify:
+            - restart apache
+        
+        - name: ensure apache is running (and enable it at boot)
+            service: name=httpd state=started enabled=yes
+
+    handlers:
+        - name: restart apache
+            service: name=httpd state=restarted
+-------------------------------------------------------------------------------
+# Action
+
+An action is a part of a task that specifies which of the modules to run and which arguments
+to pass to that module. Each task can have only one action, but it may also have other parameters
+-------------------------------------------------------------------------------
+# Handlers
+
+A Handler is exactly the same as a Task (it can do anything a Task can), but it will run when called
+by another task. It can be regarded as part of an Event system. It will take action when called by an
+event it listens for. Handler is marked by the keyword notify.
+example: - 
+    tasks
+        - name: my_task
+        notify
+            - Start handler_task
+
+This will notify any handler called handler_task after my_task is run.
+-------------------------------------------------------------------------------
+# Playbooks
+These are completely different way to use ansible than adhoc execution. Playbooks are the basis for a 
+simple configuration management and multi machine development system.
+Playbooks can declare configurations, they can also orchestrate steps of any manual ordered process.
+The syntax of these files is in YAML.
+The goal of play is to map a group of hosts to some well defined roles represented by things Ansible calls tasks
+The following is an example of a multiple servers playbook
+---
+- hosts: webservers
+  remote_user: root
+
+  tasks:
+  - name: ensure apache is at the latest version
+    yum: name=httpd state=latest
+  - name: write the apache config file
+    template: src=/srv/httpd.j2 dest=/etc/httpd.conf
+
+- hosts: databases
+  remote_user: root
+
+  tasks:
+  - name: ensure postgresql is at the latest version
+    yum: name=postgresql state=latest
+  - name: ensure that postgresql is started
+    service: name=postgresql state=started
+
+As it could be observed above for each host multiple tasks could be defined. For each playbook can  be decided
+which machine or machines to target in the infrastructure. Each task could be regarded as a play.
+
+By composing a playbook of multiple plays, it is possible to orchestrate multi-machine deployments, running certain
+steps on all machines in the webservers group, then certain steps on the database server group, then more commands
+back on the webservers group, etc.
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------

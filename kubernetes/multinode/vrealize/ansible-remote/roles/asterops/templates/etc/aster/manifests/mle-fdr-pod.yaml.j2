@@ -1,0 +1,65 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: mlefdr
+      namespace: AsterNamespace
+      labels:
+        name: mlefdr
+      annotations:
+        service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+    spec:
+      # Required to make the service headless so you can address individual stateful set nodes
+      clusterIP: None
+      selector:
+        name: mlefdr
+
+  - apiVersion: apps/v1
+    kind: StatefulSet
+    metadata:
+      name: mlefdr
+      namespace: AsterNamespace
+      labels:
+        name: mlefdr
+    spec:
+      serviceName: mlefdr
+      replicas: 1
+      selector:
+        matchLabels:
+          name: mlefdr
+      template:
+        metadata:
+          name: mlefdr
+          labels:
+            name: mlefdr
+        spec:
+          volumes:
+            - name: mlefdrpvc
+              persistentVolumeClaim:
+                claimName: mlefdr-pvc
+            - name: node-exporter-textfiledir
+              hostPath:
+                path: /var/log/prometheus_node_exporter
+          serviceAccountName: mlefdrsa
+          imagePullSecrets:
+            - name: regsecret
+          containers:
+            - name: mlefdr
+              image: localregistryhost:localregistryport/fdr:localregistrytag
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: CONTAINER_NAME
+                  value: "fdr"
+              volumeMounts:
+                - name: mlefdrpvc
+                  mountPath: /home/beehive/pvc
+                - name: node-exporter-textfiledir
+                  mountPath: /var/log/prometheus_node_exporter

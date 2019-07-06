@@ -1,0 +1,47 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+#
+# Aster deployment and start/stop script on multi-node vRA cluster
+
+- hosts: aster_local
+  tasks:
+    - fail:
+        msg: "variable runtype should be defined with: install/start/stop/restart"
+      when: runtype is not defined or ( runtype != "install" and runtype != "start" and runtype != "stop" and runtype != "restart")
+
+    - set_fact: security="authentication"
+      when: security is undefined
+    
+    - set_fact: kubectl_fact="kubectl --kubeconfig={{ hostvars[inventory_hostname].kubeconfig }}"
+
+- hosts: aster_local
+  roles:
+    - { role: asterops, mode: install, tags: install, when: runtype == "install" }
+    - { role: asterops, mode: start,   tags: install,   when: runtype == "install" }
+  environment:
+    - SECURITY_LEVEL: "{{security}}"
+    - KUBECTL: "{{kubectl_fact}}"
+
+- hosts: aster_local
+  gather_facts: no
+  any_errors_fatal: true
+  roles:
+    - { role: asterops, mode: start, tags: start, when: runtype == "start" }
+  environment:
+    - SECURITY_LEVEL: "{{security}}"
+    - KUBECTL: "{{kubectl_fact}}"
+
+- hosts: aster_local
+  roles:
+    - { role: asterops, mode: stop, tags: stop, when: runtype == "stop" }
+  environment:
+    - SECURITY_LEVEL: "{{security}}"
+    - KUBECTL: "{{kubectl_fact}}"
+
+- hosts: aster_local
+  roles:
+    - { role: asterops, mode: stop,  tags: restart, when: runtype == "restart" }
+    - { role: asterops, mode: start, tags: restart, when: runtype == "restart" }
+  environment:
+    - SECURITY_LEVEL: "{{security}}"
+    - KUBECTL: "{{kubectl_fact}}"
