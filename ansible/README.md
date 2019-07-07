@@ -20,3 +20,4 @@
    (run the above command twice and see the difference in yellow and green)
 8. ansible all -m yum -a "name=nmap state=present" -s
 9. ansible all -m copy -a "src=/tmp/filename dest=/tmp/filename1" -s
+10. ansible-playbook main.yml -i host1 --tags dns // to run dns tags on main.yml
