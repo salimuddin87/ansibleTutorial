@@ -1,0 +1,39 @@
+Show manual page of ansible playbook
+	$man ansible-playbook
+
+List all tasks in the playbook
+	$ ansible-playbook playbook.yml --list-tasks
+
+Start the play from a particular task
+	$ ansible-playbook playbook.yml --start-at-task="task_name"
+
+Start the play step by step with interactive way. This will prompt the user
+for to confirm each task before running.
+	$ ansible-playbook playbook.yml --step
+
+Check syntax of the playbook
+	$ ansible-playbook playbook.yml --syntax-check
+
+Execute the playbook in the check(dry-run) mode, which check what changes will be performed
+	$ ansible-playbook playbook.yml --check
+
+List hosts on which playbook will be executed (subset is groups in hosts file)
+	$ ansible-playbook playbook.yml --list-hosts -l subset
+
+List tags in the playbook
+	$ ansible-playbook playbook.yml --list-tags
+
+Only run plays and tasks tagged with these tag values
+	$ ansible-playbook playbook.yml --tags tag1, tag2, ....tagN
+
+Skip the tasks associated with specific tasks
+	$ ansible-playbook playbook.yml --skip-tags "tag1, tag2, ...tagN"
+
+The --forks what lets ansible run on multiple hosts in parallel, 
+NUM is specified as an integer, the default is 5.
+	$ ansible-playbook playbook.yml --forks=NUM
+
+Run a playbook on the target hosts without inventory files.
+	$ ansible-playbook playbook.yml -i [ IP | ServerName ],
+
+
