@@ -1,0 +1,24 @@
+---
+
+- hosts: all
+  tasks:
+
+- name: apply common configuration
+  hosts: all
+  user: ansible
+  become: yes
+  become_method: sudo
+  tasks:
+
+  roles:
+      - common
+
+- name: install and configure apache webservers
+  hosts: webservers
+  user: ansible
+  become: yes
+  become_method: sudo
+  tasks:
+
+  roles:
+      - web          

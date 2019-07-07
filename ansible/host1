@@ -1,0 +1,6 @@
+[all]
+labserver1.com
+webserver1.com
+
+[webservers]
+webserver1.com
