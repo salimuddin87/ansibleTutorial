@@ -1,5 +1,12 @@
 # Ansible Tutorial
 
+# Roles
+1. files --> contain reguler files those need to be copied to the target hosts.
+2. handlers --> event handlers
+3. meta --> role dependencies
+4. templates --> similar to files, but contain dynamic data.
+5. tasks --> playbook tasks
+6. vars/group_vars --> variable defination
 
 # Ansible commands
 1. ansible-doc -l | more // list all modules
