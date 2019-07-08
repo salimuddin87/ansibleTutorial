@@ -1,1 +1,0 @@
-../../../../../cleanup/files/etc/aster/manifests/dockerRMI.sh

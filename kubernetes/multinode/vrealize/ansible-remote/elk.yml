@@ -1,5 +1,0 @@
-# tddb CONFIDENTIAL AND TRADE SECRET
-
-- hosts: aster_local
-  roles:
-    - { role: ELK, tags: ELK }
