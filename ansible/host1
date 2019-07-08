@@ -1,6 +1,8 @@
 [all]
-labserver1.com
-webserver1.com
+sdl37094.labs.teradata.com 
 
 [webservers]
-webserver1.com
+sdl37095.labs.teradata.com
+
+[ntpservers]
+sdl37095.labs.teradata.com
