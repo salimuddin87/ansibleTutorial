@@ -1,0 +1,306 @@
+# Copyright (c) 2017 by bad_db Corporation. All rights reserved.
+# tddb CORPORATION CONFIDENTIAL AND TRADE SECRET
+
+# worker POD definition
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+  namespace: AsterNamespace
+  labels:
+    name: worker
+spec:
+  containers:
+    - name: statsserver
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_STATSSERVER }}"
+          cpu: "{{ REQ_CPU_STATSSERVER }}"
+      image: localregistryhost:localregistryport/statsserver:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "statsserver"
+        - name: MY_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SYSMAN_IP
+          value: "localsysmanip"
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: STATS_SERVER_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: STATS_UPDATE_INTERVAL_SEC
+          value: "5"
+      ports:
+        - containerPort: 1953
+      volumeMounts:
+        - mountPath: /primary/tmp
+          name: worker-tempspace
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+    - name: iceserver
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_ICE }}"
+          cpu: "{{ REQ_CPU_ICE }}"
+      image: localregistryhost:localregistryport/ice:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "iceserver"
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+      ports:
+        - containerPort: 2117
+        - containerPort: 2115
+      volumeMounts:
+        - mountPath: /primary/tmp
+          name: worker-tempspace
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+      securityContext:
+        privileged: true
+    - name: txmanslave
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_TXMANSLAVE }}"
+          cpu: "{{ REQ_CPU_TXMANSLAVE }}"
+      image: localregistryhost:localregistryport/txmanslave:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "txmanslave"
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SYSMAN_IP
+          value: "localsysmanip"
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+      ports:
+        - containerPort: 1985
+      volumeMounts:
+        - mountPath: /primary/tmp
+          name: worker-tempspace
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+    - name: workerdb
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_ARC }}"
+          cpu: "{{ REQ_CPU_ARC }}"
+      image: localregistryhost:localregistryport/arc:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "workerdb"
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SYSMAN_IP
+          value: "localsysmanip"
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PARTITION_INDEX
+          value: "0"
+        - name: STATS_SERVER_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: QOS_SLAVE_EXEC_PORT
+          value: "2200"
+        - name: ARC_PORT
+          value: "9001"
+        - name: STATS_UPDATE_INTERVAL_SEC
+          value: "5"
+      ports:
+        - containerPort: 9001
+      volumeMounts:
+        - mountPath: /primary/tmp
+          name: worker-tempspace
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - mountPath: /opt3/aster/amvdb
+          name: aster-amvdb
+          readOnly: true
+        - name: asteramv
+          mountPath: /opt3/aster
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+      securityContext:
+        privileged: true
+    - name: runner
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_RUNNER }}"
+          cpu: "{{ REQ_CPU_RUNNER }}"
+      image: localregistryhost:localregistryport/runner:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "runner"
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SYSMAN_IP
+          value: "localsysmanip"
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: STATS_SERVER_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: QOS_SLAVE_EXEC_PORT
+          value: "1995"
+        - name: STATS_UPDATE_INTERVAL_SEC
+          value: "5"
+      ports:
+        - containerPort: 2000
+      volumeMounts:
+        - mountPath: /primary/tmp
+          name: worker-tempspace
+        - mountPath: /dev/shm/td_qg_ipc
+          name: shared-memory
+        - mountPath: /var/opt/tddb/tdqg
+          name: qg-var
+        - mountPath: /opt/tddb/tdqg
+          name: qg-opt
+        - mountPath: /etc/opt/tddb/tdconfig/tdqg
+          name: qg-tdconfig
+        - mountPath: /tmp/hostname
+          name: etc-hostname
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+      securityContext:
+        privileged: true
+    - name: rum
+      resources:
+        requests:
+          memory: "{{ REQ_MEM_RUM }}"
+          cpu: "{{ REQ_CPU_RUM }}"
+      image: localregistryhost:localregistryport/rum:localregistrytag
+      env:
+        - name: CONTAINER_NAME
+          value: "rum"
+        - name: FS_CHECKING_INTERVAL
+          value: "30"
+        - name: FS_REJECT_NEW_QUERIES_THRESHOLD 
+          value: "80%"
+        - name: FS_CANCEL_RUNNING_QUERIES_THRESHOLD
+          value: "85%"
+        - name: WORKER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SYSMAN_IP
+          value: "localsysmanip"
+      ports:
+        - containerPort: 2195
+      volumeMounts:
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+        - name: node-exporter-textfiledir
+          mountPath: /var/log/prometheus_node_exporter
+  initContainers:
+    - name: securitysetup
+      image: localregistryhost:localregistryport/setupcommon:localregistrytag
+      volumeMounts:
+        - name: security-credentials
+          mountPath: "/home/beehive/config/security/credentials"
+        - name: arc-client-credentials
+          mountPath: /home/beehive/.postgresql
+  imagePullSecrets:
+    - name: regsecret
+  nodeSelector:
+     worker1: w1pod
+  volumes:
+    - name: worker-tempspace
+      emptyDir: {}
+    - name: shared-memory
+      hostPath:
+        path: /dev/shm/td_qg_ipc
+    - name: qg-var
+      hostPath:
+        path: /var/opt/tddb/tdqg
+    - name: qg-opt
+      hostPath:
+        path: /opt/tddb/tdqg
+    - name: qg-tdconfig
+      hostPath:
+        path: /etc/opt/tddb/tdconfig/tdqg
+    - name: etc-hostname
+      hostPath:
+        path: /etc/hostname
+    - name: security-credentials
+      projected:
+        sources:
+        - secret:
+            name: arcserver
+        - secret:
+            name: arcclient
+        - secret:
+            name: iceserver
+        - secret:
+            name: configjson
+    - name: arc-client-credentials
+      emptyDir: {}
+    - name: aster-amvdb
+      hostPath:
+        path: /opt3/aster/amvdb
+    - name: asteramv
+      projected:
+        sources:
+        - secret:
+            name: useamvdb
+    - name: node-exporter-textfiledir
+      hostPath:
+        path: /var/log/prometheus_node_exporter

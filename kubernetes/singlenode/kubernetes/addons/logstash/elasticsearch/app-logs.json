@@ -1,0 +1,27 @@
+{
+  "template": "app-*",
+  "mappings": {
+    "_default_": {
+      "dynamic_templates": [
+        {
+          "logline_field": {
+            "mapping": {
+              "index": "not_analyzed",
+              "type": "string"
+            },
+            "match": "logline"
+          }
+        },
+        {
+          "component_field": {
+            "mapping": {
+              "index": "not_analyzed",
+              "type": "string"
+            },
+            "match": "component"
+          }
+        }
+      ]
+    }
+  }
+}

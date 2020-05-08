@@ -1,0 +1,24 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+#
+# UpgradeExport Pod deployment and start script on queen node in vRA cluster
+
+- hosts: aster_local
+  tasks:
+    - fail:
+        msg: "variable tarfile should be defined with appropriate name"
+      when: tarfile is not defined or ( tarfile == "" or tarfile == " ")
+
+    - fail:
+        msg: "variable hashfile should be defined with appropriate name"
+      when: hashfile is not defined or ( hashfile == "" or hashfile == " ")
+
+    - fail:
+        msg: "variable force should be defined with either 1 or 0"
+      when: force is not defined or ( force == "" or force == " ")
+
+- hosts: aster_local
+  gather_facts: no
+  any_errors_fatal: true
+  roles:
+    - { role: upgradeexport }

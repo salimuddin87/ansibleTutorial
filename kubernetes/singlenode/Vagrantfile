@@ -1,0 +1,83 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# Specify Vagrant version, Vagrant API version, and Vagrant clone location
+Vagrant.require_version ">= 1.6.0"
+VAGRANTFILE_API_VERSION = "2"
+ENV['VAGRANT_VMWARE_CLONE_DIRECTORY'] = '~/.vagrant'
+ENV['VAGRANT_DEFAULT_PROVIDER'] = 'virtualbox'
+
+# Create and configure the VM(s)
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.network :forwarded_port, id: 'ssh', guest: 22, host: 2224
+
+  # Assign a friendly name to this host VM
+  config.vm.hostname = "docker-host"
+
+  # Skip checking for an updated Vagrant box
+  config.vm.box_check_update = false
+
+  # Always use Vagrant's default insecure key
+  config.ssh.insert_key = false
+
+  # Spin up a "host box" for use with the Docker provider
+  # and then provision it with Docker
+  config.vm.box = "puphpet/ubuntu1604-x64"
+  config.vm.provision "docker"
+  config.vm.provision "docker_compose"
+
+  # Kill SSH connection to Docker Host
+  # Workaround for Vagrant issue #3998 related to group memberships
+  # config.vm.provision "shell", inline: "ps aux | grep 'sshd:' | awk '{print $2}' | xargs kill"
+
+  config.vm.network "forwarded_port",id: 'kubernetes', guest: 8080, host: 8080, auto_correct: true
+  config.vm.network "forwarded_port",id: 'kubernetes-ui', guest: 9090, host: 9090, auto_correct: true
+  config.vm.network "forwarded_port",id: 'docker-daemon', guest: 2375, host: 2375, auto_correct: true
+  config.vm.network "forwarded_port",id: 'kibana',  guest: 5601, host: 5601, auto_correct: true
+  config.vm.network "forwarded_port",id: 'logging-service',  guest: 8002, host: 8002, auto_correct: true
+  config.vm.network "forwarded_port",id: 'system-service',  guest: 8004, host: 8004, auto_correct: true
+  config.vm.network "forwarded_port",id: 'registry',  guest: 5001, host: 5001, auto_correct: true
+  config.vm.network "forwarded_port",id: 'consul', guest: 8500, host: 8500, auto_correct: true
+  config.vm.network "forwarded_port",id: 'cadvisor', guest: 4194, host: 4194, auto_correct: true
+  config.vm.network "forwarded_port",id: 'cockpit-ui', guest: 9091, host: 9091, auto_correct: true
+  config.vm.network "forwarded_port",id: 'audit-service', guest: 8005, host: 8005, auto_correct: true
+  config.vm.network "forwarded_port",id: 'notification-service', guest: 8006, host: 8006, auto_correct: true
+
+  # Disable synced folders (prevents an NFS error on "vagrant up")
+  config.vm.synced_folder ".", "/vagrant", disabled: false
+  # For this setup to work, below direcotry must be created
+  # docker_builder automatically creates below direcotry
+  # and generates aster processes docker images
+  config.vm.synced_folder "../../docker/build/docker_images/","/aster", disabled: false
+
+  config.vm.provider "virtualbox" do |v|
+    v.memory = 8192
+    v.cpus = 2
+  end
+  config.vm.provider "virtualbox" do |v|
+    v.customize ["modifyvm", :id, "--nictype1", "virtio"]
+  end
+
+  config.vm.provider "vmware_fusion" do |v|
+    v.vmx["memsize"] = "3072"
+    v.vmx["numvcpus"] = "2"
+  end
+  config.vm.provision "file", source: "./docker-engine.conf", destination: "/tmp/docker"
+  config.vm.provision "shell", inline: <<-SHELL
+     sudo apt-get install -y postgresql-client vim
+
+     sudo rm /etc/default/docker
+     sudo cp /tmp/docker /etc/default/docker
+     sudo service docker stop
+     sudo rm -rf /var/lib/docker/
+     sudo service docker start
+
+     # iptables -A INPUT -i docker0 -j ACCEPT
+
+     sudo wget -O /usr/local/bin/kubectl "http://storage.googleapis.com/kubernetes-release/release/v1.3.4/bin/linux/amd64/kubectl"
+     sudo chmod +x /usr/local/bin/kubectl
+
+     echo "cd /vagrant" >> /home/vagrant/.bashrc
+   SHELL
+
+end

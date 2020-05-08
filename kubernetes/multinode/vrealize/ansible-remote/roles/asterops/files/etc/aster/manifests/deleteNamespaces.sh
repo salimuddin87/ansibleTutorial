@@ -1,0 +1,1 @@
+../../../../../cleanup/files/etc/aster/manifests/deleteNamespaces.sh

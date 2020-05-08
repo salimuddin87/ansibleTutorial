@@ -1,0 +1,22 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+# QueenExec service definition
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: queenexec-service
+  namespace: AsterNamespace
+  labels:
+    name: queenexec-service
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: NodePort
+  ports:
+    - name: queenexec-p1
+      port: 2406
+      nodePort: 30002
+  selector:
+    name: queen

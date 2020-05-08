@@ -1,0 +1,119 @@
+# Copyright 2018 bad_db. All rights reserved.
+# tddb CONFIDENTIAL AND TRADE SECRET
+
+---
+apiVersion: v1
+kind: List
+items:
+
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: curator-config
+      namespace: kube-system
+      labels:
+        k8s-app: elasticsearch-curator
+        version: "5.3.0"
+    data:
+      action_file.yml: |-
+        ---
+        actions:
+          1:
+            action: delete_indices
+            description: >-
+              Delete indices older than X days (based on index name), for logstash-
+              prefixed indices. Ignore the error if the filter does not result in an
+              actionable list of indices (ignore_empty_list) and exit cleanly.
+            options:
+              ignore_empty_list: True
+              continue_if_exception: True
+              disable_action: False
+            filters:
+            - filtertype: pattern
+              kind: prefix
+              value: ${INDEX_PREFIX:logstash-}
+            - filtertype: age
+              source: name
+              direction: older
+              timestring: '%Y.%m.%d'
+              unit: days
+              unit_count:  ${DAYS:7}
+          2:
+            action: delete_indices
+            description: >-
+              Delete indices in excess of MAX_SIZE (default 1Gb), starting with the oldest indices,
+              based on newest entry in index.
+            options:
+              ignore_empty_list: True
+              timeout_override: 300
+              continue_if_exception: True
+              disable_action: False
+            filters:
+            - filtertype: pattern
+              kind: prefix
+              value: ${INDEX_PREFIX:logstash-}
+            - filtertype: space
+              disk_space: ${MAX_GB_SIZE:5}
+              use_age: True
+              source: field_stats
+              field: '@timestamp'
+              stats_result: max_value
+      config.yml: |-
+        ---
+        client:
+          hosts:
+            - ${ELASTIC_HOST}
+          port: 9200
+          use_ssl: False
+          ssl_no_validate: False
+          timeout: 30
+          master_only: False
+        logging:
+          loglevel: DEBUG
+          logformat: default
+          blacklist: ['elasticsearch', 'urllib3']
+
+  - apiVersion: batch/v2alpha1
+    kind: CronJob
+    metadata:
+      name: elasticsearch-curator
+      namespace: kube-system
+      labels:
+        k8s-app: elasticsearch-curator
+        version: "5.3.0"
+        kubernetes.io/cluster-service: "true"
+    spec:
+      schedule: 0 23 * * *
+      jobTemplate:
+        spec:
+          template:
+            metadata:
+              labels:
+                data: elastic
+            spec:
+              containers:
+              - name: curator
+                image: aloha2you/elasticsearch-curator:5.3.0
+                args: ["--config", "/etc/config/config.yml", "/etc/config/action_file.yml"]
+                env:
+                  - name: MAX_GB_SIZE
+                    value: '30'
+                  - name: DAYS
+                    value: '30'
+                  - name: ELASTIC_HOST
+                    value: "elasticsearch-logging"
+                  - name: INDEX_PREFIX
+                    value: logstash-
+                volumeMounts:
+                  - name: config-volume
+                    mountPath: /etc/config
+              volumes:
+                - name: config-volume
+                  configMap:
+                    name: curator-config
+                    items:
+                    - key: config.yml
+                      path: config.yml
+                    - key: action_file.yml
+                      path: action_file.yml
+              restartPolicy: OnFailure

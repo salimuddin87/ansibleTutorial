@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: elasticsearch-logging-v1
+  namespace: kube-system
+  labels:
+    k8s-app: elasticsearch-logging
+    version: v1
+    kubernetes.io/cluster-service: "true"
+spec:
+  replicas: 1
+  selector:
+    k8s-app: elasticsearch-logging
+    version: v1
+  template:
+    metadata:
+      labels:
+        k8s-app: elasticsearch-logging
+        version: v1
+        kubernetes.io/cluster-service: "true"
+    spec:
+      containers:
+      - image: quay.ac.uda.io/appcenter/google_containers_elasticsearch:1.9
+        name: elasticsearch-logging         
+        ports:
+        - containerPort: 9200
+          hostPort: 9200
+          name: db
+          protocol: TCP
+        - containerPort: 9300
+          hostPort: 9300
+          name: transport
+          protocol: TCP
+        volumeMounts:
+        - name: es-persistent-storage
+          mountPath: /data
+        volumeMounts:
+        - name: elasticsearch-conf
+          mountPath: /elasticsearch-2.3.3/config/elasticsearch.yml
+          readOnly: true
+      - image: quay.ac.uda.io/cloud_container_platform/logstash:v2.3 
+        name: logstash
+        ports:
+        - containerPort: 5000
+          hostPort: 5000
+          name: logstash 
+          protocol: TCP
+        volumeMounts: 
+        - mountPath: /etc/logstash/conf.d 
+          name: logstash-config
+      volumes:
+      - name: es-persistent-storage
+        emptyDir: {}
+      - name: elasticsearch-conf
+        hostPath:
+          path: "/vagrant/kubernetes/addons/elasticsearch.yml"
+      - name: logstash-config
+        hostPath:
+          path: "/vagrant/kubernetes/addons/logstash"

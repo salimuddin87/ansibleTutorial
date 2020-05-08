@@ -1,0 +1,23 @@
+# Copyright (c) 2017 by bad_db Corporation. All rights reserved.
+# tddb CORPORATION CONFIDENTIAL AND TRADE SECRET
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: consul
+  namespace: cloud-aster
+  labels:
+    name: consul
+spec:
+  containers:
+    - name: consul
+      image: quay.ac.uda.io/library/consul:v0.6.4
+      args:
+        - "agent"
+        - "-ui"
+        - "-client=0.0.0.0"
+      env:
+        - name: CONSUL_LOCAL_CONFIG
+          value: '{"bootstrap": true, "server": true, "ports": {"dns": -1}}'
+      ports:
+        - containerPort: 8500

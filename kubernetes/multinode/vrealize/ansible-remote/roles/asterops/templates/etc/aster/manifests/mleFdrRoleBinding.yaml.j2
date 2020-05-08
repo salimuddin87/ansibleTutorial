@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: RoleBinding
+metadata:
+  name: mle-fdr-rolebinding
+  namespace: AsterNamespace
+subjects:
+  - kind: ServiceAccount
+    name: mlefdrsa
+    namespace: AsterNamespace
+roleRef:
+  kind: Role
+  name: mle-fdr-role
+  apiGroup: rbac.authorization.k8s.io
